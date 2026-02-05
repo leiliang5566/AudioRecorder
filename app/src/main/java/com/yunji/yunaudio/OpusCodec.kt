@@ -14,7 +14,7 @@ class OpusCodec(
     private val frameSize: Constants.FrameSize = Constants.FrameSize._120()
 ) {
 
-    private val codec: Opus = Opus()
+//    private val codec: Opus = Opus()
     private var concentusDecoder: OpusDecoder? = null
     private var isInitialized = false
 
@@ -34,13 +34,13 @@ class OpusCodec(
     ): Boolean {
         return try {
             // 初始化编码器和解码器 (Opus 原生库)
-            codec.encoderInit(sampleRate, channels, application)
-            codec.decoderInit(sampleRate, channels)
+//            codec.encoderInit(sampleRate, channels, application)
+//            codec.decoderInit(sampleRate, channels)
 
             // 配置编码器参数（可选）
-            val complexityConfig = Constants.Complexity.instance(complexity)
-            codec.encoderSetComplexity(complexityConfig)
-            codec.encoderSetBitrate(bitrate)
+//            val complexityConfig = Constants.Complexity.instance(complexity)
+//            codec.encoderSetComplexity(complexityConfig)
+//            codec.encoderSetBitrate(bitrate)
 
             // 初始化 Concentus 解码器
             val rate = getSampleRateInt()
@@ -61,81 +61,81 @@ class OpusCodec(
      * @param pcmFrame PCM 音频数据（字节数组）
      * @return 编码后的 Opus 数据（ByteArray），失败返回 null
      */
-    fun encodePcmToOpus(pcmFrame: ByteArray): ByteArray? {
-        if (!isInitialized) {
-            Log.e(TAG, "Codec not initialized")
-            return null
-        }
-
-        return try {
-            val encoded = codec.encode(pcmFrame, frameSize)
-            if (encoded != null) {
-                val byteArray = encoded
-                Log.d(TAG, "Encoded PCM frame (${pcmFrame.size} bytes) to Opus (${byteArray.size} bytes)")
-                byteArray
-            } else {
-                Log.w(TAG, "Encoding returned null")
-                null
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error encoding PCM to Opus", e)
-            null
-        }
-    }
+//    fun encodePcmToOpus(pcmFrame: ByteArray): ByteArray? {
+//        if (!isInitialized) {
+//            Log.e(TAG, "Codec not initialized")
+//            return null
+//        }
+//
+//        return try {
+//            val encoded = codec.encode(pcmFrame, frameSize)
+//            if (encoded != null) {
+//                val byteArray = encoded
+//                Log.d(TAG, "Encoded PCM frame (${pcmFrame.size} bytes) to Opus (${byteArray.size} bytes)")
+//                byteArray
+//            } else {
+//                Log.w(TAG, "Encoding returned null")
+//                null
+//            }
+//        } catch (e: Exception) {
+//            Log.e(TAG, "Error encoding PCM to Opus", e)
+//            null
+//        }
+//    }
 
     /**
      * 将 PCM 音频帧编码为 Opus 格式（Short 数组版本）
      * @param pcmFrame PCM 音频数据（short 数组）
      * @return 编码后的 Opus 数据（ByteArray），失败返回 null
      */
-    fun encodePcmToOpus(pcmFrame: ShortArray): ByteArray? {
-        if (!isInitialized) {
-            Log.e(TAG, "Codec not initialized")
-            return null
-        }
-
-        return try {
-            val encoded = codec.encode(pcmFrame, frameSize)
-            if (encoded != null) {
-                val byteArray = shortArrayToByteArray(encoded)
-                Log.d(TAG, "Encoded PCM frame (${pcmFrame.size} shorts) to Opus (${byteArray.size} bytes)")
-                byteArray
-            } else {
-                Log.w(TAG, "Encoding returned null")
-                null
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error encoding PCM to Opus", e)
-            null
-        }
-    }
+//    fun encodePcmToOpus(pcmFrame: ShortArray): ByteArray? {
+//        if (!isInitialized) {
+//            Log.e(TAG, "Codec not initialized")
+//            return null
+//        }
+//
+//        return try {
+//            val encoded = codec.encode(pcmFrame, frameSize)
+//            if (encoded != null) {
+//                val byteArray = shortArrayToByteArray(encoded)
+//                Log.d(TAG, "Encoded PCM frame (${pcmFrame.size} shorts) to Opus (${byteArray.size} bytes)")
+//                byteArray
+//            } else {
+//                Log.w(TAG, "Encoding returned null")
+//                null
+//            }
+//        } catch (e: Exception) {
+//            Log.e(TAG, "Error encoding PCM to Opus", e)
+//            null
+//        }
+//    }
 
     /**
      * 将 Opus 格式解码为 PCM 音频帧
      * @param opusFrame Opus 编码数据（ByteArray）
      * @return 解码后的 PCM 数据（字节数组），失败返回 null
      */
-    fun decodeOpusToPcm(opusFrame: ByteArray): ByteArray? {
-        if (!isInitialized) {
-            Log.e(TAG, "Codec not initialized")
-            return null
-        }
-
-        return try {
-            // 将 ByteArray 转换为 ShortArray 后解码
-            val opusShorts = byteArrayToShortArray(opusFrame)
-            val decoded = codec.decode(opusShorts, frameSize)
-            if (decoded != null) {
-                Log.d(TAG, "Decoded Opus frame (${opusFrame.size} bytes) to PCM (${decoded.size} bytes)")
-            } else {
-                Log.w(TAG, "Decoding returned null")
-            }
-            shortArrayToByteArray(decoded!!)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error decoding Opus to PCM", e)
-            null
-        }
-    }
+//    fun decodeOpusToPcm(opusFrame: ByteArray): ByteArray? {
+//        if (!isInitialized) {
+//            Log.e(TAG, "Codec not initialized")
+//            return null
+//        }
+//
+//        return try {
+//            // 将 ByteArray 转换为 ShortArray 后解码
+//            val opusShorts = byteArrayToShortArray(opusFrame)
+//            val decoded = codec.decode(opusShorts, frameSize)
+//            if (decoded != null) {
+//                Log.d(TAG, "Decoded Opus frame (${opusFrame.size} bytes) to PCM (${decoded.size} bytes)")
+//            } else {
+//                Log.w(TAG, "Decoding returned null")
+//            }
+//            shortArrayToByteArray(decoded!!)
+//        } catch (e: Exception) {
+//            Log.e(TAG, "Error decoding Opus to PCM", e)
+//            null
+//        }
+//    }
 
     /**
      * 使用 Concentus 库将 Opus 格式解码为 PCM 音频帧
@@ -186,22 +186,22 @@ class OpusCodec(
      * @param frameSizeBytes 每帧的大小（字节数）
      * @return 编码后的 Opus 数据列表（ByteArray列表）
      */
-    fun encodeStream(pcmData: ByteArray, frameSizeBytes: Int): List<ByteArray> {
-        val encodedFrames = mutableListOf<ByteArray>()
-        var offset = 0
-
-        while (offset + frameSizeBytes <= pcmData.size) {
-            val frame = pcmData.copyOfRange(offset, offset + frameSizeBytes)
-            val encoded = encodePcmToOpus(frame)
-            if (encoded != null) {
-                encodedFrames.add(encoded)
-            }
-            offset += frameSizeBytes
-        }
-
-        Log.d(TAG, "Encoded ${encodedFrames.size} frames from stream")
-        return encodedFrames
-    }
+//    fun encodeStream(pcmData: ByteArray, frameSizeBytes: Int): List<ByteArray> {
+//        val encodedFrames = mutableListOf<ByteArray>()
+//        var offset = 0
+//
+//        while (offset + frameSizeBytes <= pcmData.size) {
+//            val frame = pcmData.copyOfRange(offset, offset + frameSizeBytes)
+//            val encoded = encodePcmToOpus(frame)
+//            if (encoded != null) {
+//                encodedFrames.add(encoded)
+//            }
+//            offset += frameSizeBytes
+//        }
+//
+//        Log.d(TAG, "Encoded ${encodedFrames.size} frames from stream")
+//        return encodedFrames
+//    }
 
     /**
      * 批量编码 PCM 数据流（Short数组版本）
@@ -209,22 +209,22 @@ class OpusCodec(
      * @param frameSizeShorts 每帧的大小（short数量）
      * @return 编码后的 Opus 数据列表（ByteArray列表）
      */
-    fun encodeStream(pcmData: ShortArray, frameSizeShorts: Int): List<ByteArray> {
-        val encodedFrames = mutableListOf<ByteArray>()
-        var offset = 0
-
-        while (offset + frameSizeShorts <= pcmData.size) {
-            val frame = pcmData.copyOfRange(offset, offset + frameSizeShorts)
-            val encoded = encodePcmToOpus(frame)
-            if (encoded != null) {
-                encodedFrames.add(encoded)
-            }
-            offset += frameSizeShorts
-        }
-
-        Log.d(TAG, "Encoded ${encodedFrames.size} frames from stream")
-        return encodedFrames
-    }
+//    fun encodeStream(pcmData: ShortArray, frameSizeShorts: Int): List<ByteArray> {
+//        val encodedFrames = mutableListOf<ByteArray>()
+//        var offset = 0
+//
+//        while (offset + frameSizeShorts <= pcmData.size) {
+//            val frame = pcmData.copyOfRange(offset, offset + frameSizeShorts)
+//            val encoded = encodePcmToOpus(frame)
+//            if (encoded != null) {
+//                encodedFrames.add(encoded)
+//            }
+//            offset += frameSizeShorts
+//        }
+//
+//        Log.d(TAG, "Encoded ${encodedFrames.size} frames from stream")
+//        return encodedFrames
+//    }
 
     /**
      * 批量解码 Opus 数据流
@@ -232,33 +232,33 @@ class OpusCodec(
      * @param useConcentus 是否使用 Concentus 解码，默认 false
      * @return 解码后的 PCM 数据（字节数组）
      */
-    fun decodeStream(opusFrames: List<ByteArray>, useConcentus: Boolean = false): ByteArray {
-        val decodedFrames = mutableListOf<ByteArray>()
-
-        opusFrames.forEach { frame ->
-            val decoded =
-                if (useConcentus) decodeOpusToPcmConcentus(frame) else decodeOpusToPcm(frame)
-            if (decoded != null) {
-                decodedFrames.add(decoded)
-            }
-        }
-
-        // 合并所有解码后的帧
-        val totalSize = decodedFrames.sumOf { it.size }
-        val result = ByteArray(totalSize)
-        var offset = 0
-
-        decodedFrames.forEach { frame ->
-            System.arraycopy(frame, 0, result, offset, frame.size)
-            offset += frame.size
-        }
-
-        Log.d(
-            TAG,
-            "Decoded ${opusFrames.size} frames to ${result.size} bytes (Concentus: $useConcentus)"
-        )
-        return result
-    }
+//    fun decodeStream(opusFrames: List<ByteArray>, useConcentus: Boolean = false): ByteArray {
+//        val decodedFrames = mutableListOf<ByteArray>()
+//
+//        opusFrames.forEach { frame ->
+//            val decoded =
+//                if (useConcentus) decodeOpusToPcmConcentus(frame) else decodeOpusToPcm(frame)
+//            if (decoded != null) {
+//                decodedFrames.add(decoded)
+//            }
+//        }
+//
+//        // 合并所有解码后的帧
+//        val totalSize = decodedFrames.sumOf { it.size }
+//        val result = ByteArray(totalSize)
+//        var offset = 0
+//
+//        decodedFrames.forEach { frame ->
+//            System.arraycopy(frame, 0, result, offset, frame.size)
+//            offset += frame.size
+//        }
+//
+//        Log.d(
+//            TAG,
+//            "Decoded ${opusFrames.size} frames to ${result.size} bytes (Concentus: $useConcentus)"
+//        )
+//        return result
+//    }
 
     /**
      * 提取采样率整数值
@@ -316,8 +316,8 @@ class OpusCodec(
     fun release() {
         if (isInitialized) {
             try {
-                codec.encoderRelease()
-                codec.decoderRelease()
+//                codec.encoderRelease()
+//                codec.decoderRelease()
                 concentusDecoder = null
                 isInitialized = false
                 Log.d(TAG, "Opus codec released")

@@ -239,6 +239,7 @@ class MainActivity : AppCompatActivity() {
         if (codec == "opus") {
             try {
                 opusDecoder = OpusCodec()
+                opusDecoder?.initialize()
                 addLog("Opus 解码器已初始化")
             } catch (e: Exception) {
                 addLog("初始化 Opus 解码器失败: ${e.message}")
@@ -251,7 +252,7 @@ class MainActivity : AppCompatActivity() {
         
         val pcmData = if (config.codec == "opus" && opusDecoder != null) {
             try {
-                opusDecoder!!.decodeOpusToPcm(data)
+                opusDecoder!!.decodeOpusToPcmConcentus(data)
             } catch (e: Exception) {
                 addLog("解码失败: ${e.message}")
                 return

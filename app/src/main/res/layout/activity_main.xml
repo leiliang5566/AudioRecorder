@@ -1,0 +1,284 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:background="#F5F5F5">
+
+    <!-- 标题 -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="🎙️ 音频录制器"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        android:textColor="#333333"
+        android:gravity="center"
+        android:paddingBottom="4dp"/>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="通过 WebSocket 接收音频流并保存为 PCM"
+        android:textSize="12sp"
+        android:textColor="#666666"
+        android:gravity="center"
+        android:paddingBottom="16dp"/>
+
+    <!-- 状态卡片 -->
+    <androidx.cardview.widget.CardView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="16dp"
+        app:cardCornerRadius="12dp"
+        app:cardElevation="4dp"
+        xmlns:app="http://schemas.android.com/apk/res-auto">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <!-- WebSocket 状态 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingBottom="12dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="WebSocket 状态:"
+                    android:textStyle="bold"
+                    android:textColor="#555555"/>
+
+                <TextView
+                    android:id="@+id/tvWsStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="未连接"
+                    android:textColor="#FF9800"
+                    android:fontFamily="monospace"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:background="#F8F9FA"/>
+            </LinearLayout>
+
+            <!-- 音频配置 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingBottom="12dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="音频配置:"
+                    android:textStyle="bold"
+                    android:textColor="#555555"/>
+
+                <TextView
+                    android:id="@+id/tvAudioConfig"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="等待配置..."
+                    android:textColor="#666666"
+                    android:fontFamily="monospace"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:background="#F8F9FA"/>
+            </LinearLayout>
+
+            <!-- 录制状态 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingBottom="16dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="录制状态:"
+                    android:textStyle="bold"
+                    android:textColor="#555555"/>
+
+                <TextView
+                    android:id="@+id/tvRecordStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="就绪"
+                    android:textColor="#666666"
+                    android:fontFamily="monospace"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:background="#F8F9FA"/>
+            </LinearLayout>
+
+            <!-- 按钮组 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingBottom="16dp">
+
+                <Button
+                    android:id="@+id/btnStart"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="8dp"
+                    android:text="开始录制"
+                    android:textColor="#FFFFFF"
+                    android:background="@drawable/button_primary"/>
+
+                <Button
+                    android:id="@+id/btnStop"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="停止"
+                    android:textColor="#FFFFFF"
+                    android:background="@drawable/button_danger"/>
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/btnDownload"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="下载 PCM 文件"
+                android:textColor="#FFFFFF"
+                android:background="@drawable/button_info"
+                android:layout_marginBottom="16dp"/>
+
+            <!-- 统计信息 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <!-- 已接收数据 -->
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:padding="12dp"
+                    android:background="#F8F9FA"
+                    android:layout_marginEnd="4dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="已接收数据"
+                        android:textSize="11sp"
+                        android:textColor="#666666"/>
+
+                    <TextView
+                        android:id="@+id/tvDataSize"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0 KB"
+                        android:textSize="20sp"
+                        android:textStyle="bold"
+                        android:textColor="#667EEA"
+                        android:layout_marginTop="4dp"/>
+                </LinearLayout>
+
+                <!-- 录制时长 -->
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:padding="12dp"
+                    android:background="#F8F9FA"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="录制时长"
+                        android:textSize="11sp"
+                        android:textColor="#666666"/>
+
+                    <TextView
+                        android:id="@+id/tvDuration"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="00:00"
+                        android:textSize="20sp"
+                        android:textStyle="bold"
+                        android:textColor="#667EEA"
+                        android:layout_marginTop="4dp"/>
+                </LinearLayout>
+
+                <!-- 采样率 -->
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:padding="12dp"
+                    android:background="#F8F9FA"
+                    android:layout_marginStart="4dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="采样率"
+                        android:textSize="11sp"
+                        android:textColor="#666666"/>
+
+                    <TextView
+                        android:id="@+id/tvSampleRate"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="-"
+                        android:textSize="20sp"
+                        android:textStyle="bold"
+                        android:textColor="#667EEA"
+                        android:layout_marginTop="4dp"/>
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+    <!-- 日志区域 -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="日志"
+        android:textStyle="bold"
+        android:textColor="#333333"
+        android:paddingBottom="8dp"/>
+
+    <ListView
+        android:id="@+id/lvLogs"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#1E1E1E"
+        android:divider="#2D2D2D"
+        android:dividerHeight="1dp"
+        android:padding="8dp"
+        android:textColor="#00FF00"/>
+
+</LinearLayout>

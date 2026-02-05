@@ -1,5 +1,6 @@
 package com.yunji.yunaudio
 
+import OpusCodec
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -59,7 +60,7 @@ class MainActivity : AppCompatActivity() {
     private var durationJob: Job? = null
     
     // Opus 解码器
-    private var opusDecoder: OpusDecoder? = null
+    private var opusDecoder: OpusCodec? = null
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -237,7 +238,7 @@ class MainActivity : AppCompatActivity() {
         
         if (codec == "opus") {
             try {
-                opusDecoder = OpusDecoder(rate, channels)
+                opusDecoder = OpusCodec()
                 addLog("Opus 解码器已初始化")
             } catch (e: Exception) {
                 addLog("初始化 Opus 解码器失败: ${e.message}")
@@ -250,7 +251,7 @@ class MainActivity : AppCompatActivity() {
         
         val pcmData = if (config.codec == "opus" && opusDecoder != null) {
             try {
-                opusDecoder!!.decode(data)
+                opusDecoder!!.decodeOpusToPcm(data)
             } catch (e: Exception) {
                 addLog("解码失败: ${e.message}")
                 return
@@ -260,13 +261,13 @@ class MainActivity : AppCompatActivity() {
         }
         
         val monoPcm = if (config.channels > 1) {
-            convertToMono(pcmData, config.channels)
+            convertToMono(pcmData!!, config.channels)
         } else {
             pcmData
         }
         
         synchronized(pcmBuffers) {
-            pcmBuffers.add(monoPcm)
+            pcmBuffers.add(monoPcm!!)
             totalBytes += monoPcm.size
         }
         

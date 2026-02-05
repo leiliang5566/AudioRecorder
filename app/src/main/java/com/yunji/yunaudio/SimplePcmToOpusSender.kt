@@ -1,7 +1,6 @@
 package com.yunji.yunaudio
 
 import com.google.gson.Gson
-import com.google.gson.annotations.SerializedName
 import io.github.jaredmdobson.concentus.OpusApplication
 import io.github.jaredmdobson.concentus.OpusEncoder
 import org.java_websocket.client.WebSocketClient
@@ -17,27 +16,8 @@ import java.util.concurrent.TimeUnit
 /**
  * PCM 转 Opus 发送器 (简化版 - 无协程依赖)
  *
- * 依赖项:
- * - org.concentus:Concentus:1.17
- * - org.java-websocket:Java-WebSocket:1.5.3
- * - com.google.code.gson:gson:2.10.1
+ * 注意：HandshakeConfig 和 WebSocketMessage 已在 PCMToOpusSender.kt 中定义，此处直接复用
  */
-
-// ==================== 数据类 ====================
-
-data class HandshakeConfig(
-    val rate: Int,
-    val channels: Int,
-    val codec: String,
-    val bitrate: Int? = null,
-    @SerializedName("codec_ext")
-    val codecExt: String? = null
-)
-
-data class WebSocketMessage(
-    val action: String,
-    val data: Any? = null
-)
 
 // ==================== Opus 编码器 ====================
 
@@ -239,28 +219,3 @@ class SimplePcmSender(
         webSocket.close()
     }
 }
-
-// ==================== 主函数 ====================
-
-/*fun main() {
-    val wsUrl = "ws://127.0.0.1:38080/audio"
-    val pcmFile = File("/origin.pcm")
-    
-    if (!pcmFile.exists()) {
-        println("错误: 找不到文件 ${pcmFile.absolutePath}")
-        return
-    }
-    
-    val sender = SimplePcmSender(wsUrl, pcmFile)
-    
-    sender.connect()
-    Thread.sleep(2000)  // 等待握手
-    
-    sender.start()
-    
-    println("按 Enter 键停止...")
-    readLine()
-    
-    sender.disconnect()
-    println("程序结束")
-}*/

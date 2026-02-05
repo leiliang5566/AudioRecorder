@@ -19,6 +19,9 @@ import java.nio.ByteOrder
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
+import okhttp3.OkHttpClient
+import java.security.cert.X509Certificate
+import javax.net.ssl.*
 
 class MainActivity : AppCompatActivity() {
     private val TAG = "AudioRecorder"
@@ -37,9 +40,7 @@ class MainActivity : AppCompatActivity() {
     
     // WebSocket
     private var webSocket: WebSocket? = null
-    private val client = OkHttpClient.Builder()
-        .readTimeout(0, TimeUnit.MILLISECONDS)
-        .build()
+    private val client = OkHttpClientBuilder.createUnsafeClient()
     
     // 音频配置
     private var audioConfig: AudioConfig? = null
@@ -69,6 +70,34 @@ class MainActivity : AppCompatActivity() {
         
         scope.launch {
             connectWebSocket()
+        }
+    }
+
+    object OkHttpClientBuilder {
+
+        fun createUnsafeClient(): OkHttpClient {
+            return try {
+                val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
+                    override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
+                    override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
+                    override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+                })
+
+                val sslContext = SSLContext.getInstance("TLS")
+                sslContext.init(null, trustAllCerts, java.security.SecureRandom())
+                val sslSocketFactory = sslContext.socketFactory
+
+                val hostnameVerifier = HostnameVerifier { _, _ -> true }
+
+                OkHttpClient.Builder()
+                    .sslSocketFactory(sslSocketFactory, trustAllCerts[0] as X509TrustManager)
+                    .hostnameVerifier(hostnameVerifier)
+                    .readTimeout(0, TimeUnit.MILLISECONDS)
+                    .build()
+
+            } catch (e: Exception) {
+                throw RuntimeException("Failed to create unsafe OkHttpClient", e)
+            }
         }
     }
     

@@ -1,7 +1,7 @@
 package com.yunji.yunaudio.video
+
 import android.content.res.AssetFileDescriptor
-import android.media.MediaExtractor
-import android.media.MediaFormat
+import android.media.*
 import android.os.Bundle
 import android.util.Log
 import android.view.Surface
@@ -11,13 +11,7 @@ import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.yunji.yunaudio.R
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.*
 import java.nio.ByteBuffer
 
 /**
@@ -54,7 +48,7 @@ class AssetsVideoStreamActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "AssetsVideoStream"
-        private const val SERVER_URL = "ws://192.168.1.100:8080/ws"
+        private const val SERVER_URL = "wss://127.0.0.1:11935/ws"
         private const val ASSET_VIDEO_PATH = "2024Q1_CG.mp4"
         private const val OUTPUT_WIDTH = 1080
         private const val OUTPUT_HEIGHT = 1920
@@ -104,7 +98,15 @@ class AssetsVideoStreamActivity : AppCompatActivity() {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 decodeSurface = holder.surface
                 Log.d(TAG, "✅ Surface 已创建")
-                initializeStreamManager()
+
+                // 如果是第一次创建，初始化管理器
+                if (streamManager == null) {
+                    initializeStreamManager()
+                } else {
+                    // Surface 重新创建（从后台返回），重新设置 Surface
+                    Log.d(TAG, "🔄 Surface 重新创建，更新解码器")
+                    // TODO: 如果需要，可以重新配置解码器的 Surface
+                }
             }
 
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
@@ -112,8 +114,12 @@ class AssetsVideoStreamActivity : AppCompatActivity() {
             }
 
             override fun surfaceDestroyed(holder: SurfaceHolder) {
+                Log.d(TAG, "⚠️ Surface 被销毁（进入后台）")
                 decodeSurface = null
-                release()
+
+                // 关键：不要在这里 release()
+                // Surface 销毁不代表应用结束，可能只是进入后台
+                // 只有在 onDestroy 时才真正释放资源
             }
         })
     }
@@ -395,6 +401,9 @@ class AssetsVideoStreamActivity : AppCompatActivity() {
         btnStartStream.isEnabled = false
         btnStopStream.isEnabled = true
 
+        // 启动前台服务，保持后台运行
+        KeepAliveService.start(this)
+
         startVideoProcessing()
 
         updateStatus("🎬 播放中...")
@@ -404,6 +413,10 @@ class AssetsVideoStreamActivity : AppCompatActivity() {
         isStreaming = false
         streamJob?.cancel()
         streamJob = null
+
+        // 停止前台服务
+        KeepAliveService.stop(this)
+
         btnStartStream.isEnabled = true
         btnStopStream.isEnabled = false
         updateStatus("⏸️ 已停止")
@@ -467,8 +480,21 @@ class AssetsVideoStreamActivity : AppCompatActivity() {
                         continue
                     }
 
-                    // 解码
-                    streamManager?.decodeImmediately(annexBData, isKeyFrame)
+                    // 关键修改：只在 Surface 可用时解码
+                    if (decodeSurface != null) {
+                        // 前台，正常解码显示
+                        streamManager?.decodeImmediately(annexBData, isKeyFrame)
+                    } else {
+                        // 后台，跳过解码（节省资源）
+                        if (processedFrames % 100 == 0) {
+                            Log.v(TAG, "⏭️ 后台运行，跳过解码")
+                        }
+                    }
+
+                    // 无论前台后台，都发送到 WebSocket
+                    if (streamManager?.getStats()?.isConnected == true) {
+                        streamManager?.sendH264Data(annexBData)
+                    }
 
                     processedFrames++
                     sentBytes += annexBData.size
@@ -512,6 +538,14 @@ class AssetsVideoStreamActivity : AppCompatActivity() {
 
     private fun release() {
         stopStreaming()
+
+        // 确保服务停止
+        try {
+            KeepAliveService.stop(this)
+        } catch (e: Exception) {
+            Log.e(TAG, "停止服务失败", e)
+        }
+
         mediaExtractor?.release()
         mediaExtractor = null
         streamManager?.release()
@@ -526,8 +560,13 @@ class AssetsVideoStreamActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        if (isStreaming) {
-            stopStreaming()
-        }
+        // 不要在 onPause 中停止，允许后台继续运行
+        Log.d(TAG, "Activity onPause - 保持运行")
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // 应用完全不可见时也保持运行
+        Log.d(TAG, "Activity onStop - 保持运行")
     }
 }

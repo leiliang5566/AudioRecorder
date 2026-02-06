@@ -3,7 +3,12 @@ import android.util.Log
 import okhttp3.*
 import okio.ByteString
 import okio.ByteString.Companion.toByteString
+import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.HostnameVerifier
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 
 /**
  * WebSocket 客户端
@@ -35,6 +40,33 @@ class WebSocketClient(
         private const val READ_TIMEOUT = 0L // 无限制（实时流）
         private const val WRITE_TIMEOUT = 10L // 秒
     }
+
+    object OkHttpClientBuilder {
+        fun createUnsafeClient(): OkHttpClient {
+            return try {
+                val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
+                    override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
+                    override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
+                    override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+                })
+
+                val sslContext = SSLContext.getInstance("TLS")
+                sslContext.init(null, trustAllCerts, java.security.SecureRandom())
+                val sslSocketFactory = sslContext.socketFactory
+
+                val hostnameVerifier = HostnameVerifier { _, _ -> true }
+
+                OkHttpClient.Builder()
+                    .sslSocketFactory(sslSocketFactory, trustAllCerts[0] as X509TrustManager)
+                    .hostnameVerifier(hostnameVerifier)
+                    .readTimeout(0, TimeUnit.MILLISECONDS)
+                    .build()
+
+            } catch (e: Exception) {
+                throw RuntimeException("Failed to create unsafe OkHttpClient", e)
+            }
+        }
+    }
     
     /**
      * 连接到 WebSocket 服务器
@@ -47,13 +79,7 @@ class WebSocketClient(
         
         try {
             // 创建 OkHttpClient
-            okHttpClient = OkHttpClient.Builder()
-                .connectTimeout(CONNECT_TIMEOUT, TimeUnit.SECONDS)
-                .readTimeout(READ_TIMEOUT, TimeUnit.SECONDS)
-                .writeTimeout(WRITE_TIMEOUT, TimeUnit.SECONDS)
-                .pingInterval(PING_INTERVAL, TimeUnit.SECONDS)
-                .retryOnConnectionFailure(true)
-                .build()
+            okHttpClient = OkHttpClientBuilder.createUnsafeClient()
             
             // 创建 WebSocket 请求
             val request = Request.Builder()

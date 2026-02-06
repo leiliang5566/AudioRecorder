@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.YunAudio" parent="Theme.AppCompat.Light.DarkActionBar">
+    <style name="Theme.YunAudio" parent="Theme.MaterialComponents.Light.DarkActionBar">
         <!-- Primary brand color -->
         <item name="colorPrimary">#667EEA</item>
         <item name="colorPrimaryDark">#764BA2</item>

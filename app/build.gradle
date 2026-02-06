@@ -78,7 +78,5 @@ dependencies {
     implementation("io.github.jaredmdobson:concentus:1.0.2")
     implementation("com.google.code.gson:gson:2.10.1")
     implementation("org.java-websocket:Java-WebSocket:1.5.3")
-
-    // Opus 解码器
-    implementation files('libs/opus.aar')
+    implementation 'com.google.android.material:material:1.12.0'
 }

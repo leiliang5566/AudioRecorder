@@ -1,6 +1,4 @@
 import android.util.Log
-import com.theeasiestway.opus.Constants
-import com.theeasiestway.opus.Opus
 import io.github.jaredmdobson.concentus.OpusDecoder
 
 /**
@@ -8,10 +6,6 @@ import io.github.jaredmdobson.concentus.OpusDecoder
  * 用于在 PCM 和 Opus 格式之间进行转换
  */
 class OpusCodec(
-    private val sampleRate: Constants.SampleRate = Constants.SampleRate._48000(),
-    private val channels: Constants.Channels = Constants.Channels.stereo(),
-    private val application: Constants.Application = Constants.Application.audio(),
-    private val frameSize: Constants.FrameSize = Constants.FrameSize._120()
 ) {
 
 //    private val codec: Opus = Opus()
@@ -29,8 +23,6 @@ class OpusCodec(
      * @return 初始化是否成功
      */
     fun initialize(
-        complexity: Int = 10,
-        bitrate: Constants.Bitrate = Constants.Bitrate.max()
     ): Boolean {
         return try {
             // 初始化编码器和解码器 (Opus 原生库)
@@ -264,19 +256,14 @@ class OpusCodec(
      * 提取采样率整数值
      */
     private fun getSampleRateInt(): Int {
-        return try {
-            // 通过 toString 提取数字，例如 "SAMPLE_RATE_48000" -> 48000
-            sampleRate.toString().filter { it.isDigit() }.toInt()
-        } catch (e: Exception) {
-            48000
-        }
+        return 48000
     }
 
     /**
      * 提取通道数整数值
      */
     private fun getChannelsInt(): Int {
-        return if (channels.toString().lowercase().contains("stereo")) 2 else 1
+        return 2
     }
 
     /**
@@ -306,7 +293,7 @@ class OpusCodec(
      * 获取当前配置信息
      */
     fun getConfig(): String {
-        return "SampleRate: $sampleRate, Channels: $channels, FrameSize: $frameSize"
+        return "SampleRate"
     }
 
     /**

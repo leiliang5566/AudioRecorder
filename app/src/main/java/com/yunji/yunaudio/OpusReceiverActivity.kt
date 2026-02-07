@@ -2,15 +2,27 @@ package com.yunji.yunaudio
 
 import android.os.Bundle
 import android.os.Environment
+import android.util.Log
 import android.widget.Button
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.google.gson.Gson
+import com.yunji.yunaudio.MainActivity.OkHttpClientBuilder
 import io.github.jaredmdobson.concentus.OpusDecoder
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import okio.ByteString
 import org.java_websocket.client.WebSocketClient
 import org.java_websocket.handshake.ServerHandshake
+import org.json.JSONObject
 import java.io.File
 import java.net.URI
 import java.nio.ByteBuffer
@@ -41,20 +53,21 @@ class OpusReceiverActivity : AppCompatActivity() {
     private lateinit var scrollLog: ScrollView
 
     // 核心组件
-    private var webSocket: WebSocketClient? = null
+    private var webSocket: WebSocket? = null
     private var opusDecoder: OpusDecoder? = null
     private var audioConfig: AudioConfig? = null
     private var isRecording = false
 
     // 数据和统计
-    private val pcmBuffers = ConcurrentLinkedQueue<ShortArray>()
+    private val pcmBuffers = ConcurrentLinkedQueue<ByteArray>()
     private var totalBytes = 0L
     private var frameCount = 0
     private var startTime = 0L
     private var durationTimer: Timer? = null
+    private val client = OkHttpClientBuilder.createUnsafeClient()
 
     // WebSocket URL（可配置）
-    private val wsUrl = "wss://192.168.10.18:38080/audio-out"
+    private val wsUrl = "wss://127.0.0.1:38080/audio-out"
 
     companion object {
         private const val TAG = "OpusReceiverActivity"
@@ -66,7 +79,10 @@ class OpusReceiverActivity : AppCompatActivity() {
 
         initViews()
         setupListeners()
-        connectWebSocket()
+        lifecycleScope.launch {
+            connectWebSocket()
+        }
+
     }
 
     /**
@@ -99,11 +115,82 @@ class OpusReceiverActivity : AppCompatActivity() {
         btnStop.setOnClickListener { stopRecording() }
         btnDownload.setOnClickListener { downloadPCM() }
     }
+    private suspend fun connectWebSocket() {
+        withContext(Dispatchers.Main) {
+            log("正在连接 WebSocket...")
+            tvWsStatus.text = "正在连接..."
+            tvWsStatus.setTextColor(0xFFFF9800.toInt())
+        }
+
+        val request = Request.Builder()
+            .url("wss://127.0.0.1:38080/audio-out")
+            .build()
+
+        webSocket = client.newWebSocket(request, object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                lifecycleScope.launch(Dispatchers.Main) {
+                    log("WebSocket 连接成功")
+                    updateWsStatus("已连接", android.R.color.holo_green_light)
+                }
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                lifecycleScope.launch(Dispatchers.Main) {
+                    try {
+                        val json = JSONObject(text)
+                        val action = json.getString("action")
+
+                        when (action) {
+                            "handshake" -> {
+                                handleStringMessage(text)
+                            }
+                            "status" -> {
+                                val status = json.getString("data")
+                                log("状态更新: $status")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        log("解析消息失败: ${e.message}")
+                    }
+                }
+            }
+
+            override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                if (btnStop.isEnabled) {
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        val arr = bytes.toByteArray();
+                        Log.d("message",arr.size.toString())
+                       val buffer =  ByteBuffer.allocateDirect(arr.size);
+                        buffer.put(arr);
+                        buffer.flip()
+                        handleBinaryMessage(buffer)
+                    }
+                }
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                lifecycleScope.launch(Dispatchers.Main) {
+                    log("WebSocket 已断开")
+                    tvWsStatus.text = "已断开"
+                    tvWsStatus.setTextColor(0xFFF44336.toInt())
+                    btnStart.isEnabled = false
+                }
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                lifecycleScope.launch(Dispatchers.Main) {
+                    log("WebSocket 错误: ${t.message}")
+                    tvWsStatus.text = "连接错误"
+                    tvWsStatus.setTextColor(0xFFF44336.toInt())
+                }
+            }
+        })
+    }
 
     /**
      * 连接 WebSocket
      */
-    private fun connectWebSocket() {
+   /* private fun connectWebSocket() {
         log("正在连接 WebSocket: $wsUrl")
         updateWsStatus("正在连接...", android.R.color.holo_orange_light)
 
@@ -148,7 +235,7 @@ class OpusReceiverActivity : AppCompatActivity() {
             log("创建 WebSocket 失败: ${e.message}")
             updateWsStatus("创建失败", android.R.color.holo_red_light)
         }
-    }
+    }*/
 
     /**
      * 处理文本消息
@@ -210,7 +297,7 @@ class OpusReceiverActivity : AppCompatActivity() {
      */
     private fun initOpusDecoder(config: AudioConfig) {
         try {
-            opusDecoder = OpusDecoder(config.rate, config.channels)
+            opusDecoder = OpusDecoder(48000, 2)
             log("Opus 解码器已初始化")
         } catch (e: Exception) {
             log("初始化解码器失败: ${e.message}")
@@ -227,82 +314,113 @@ class OpusReceiverActivity : AppCompatActivity() {
         if (config.codec == "opus" && opusDecoder != null) {
             decodeOpusToPcm(opusData)
         } else {
-            val pcmData = byteArrayToShortArray(opusData)
-            pcmBuffers.add(pcmData)
+            //val pcmData
+            pcmBuffers.add(opusData)
             totalBytes += opusData.size.toLong()
             frameCount++
             runOnUiThread { updateStats() }
         }
     }
 
+    // 1. 在类成员变量中添加复用缓冲区，避免频繁创建数组
+    private var pcmDecodeBuffer = ByteArray(5760 * 2*2) // 最大支持 120ms 双声道
     /**
-     * 解码 Opus 为 PCM
+     * 原地重置 ByteArray 所有元素为 0（修改原数组，无额外内存开销）
+     * @param byteArray 待重置的 ByteArray（可为 null）
+     * @return true：重置成功；false：数组为 null/空，无需重置
+     */
+    fun resetByteArrayToZero(byteArray: ByteArray?): Boolean {
+        // 处理 null 或空数组
+        if (byteArray == null || byteArray.isEmpty()) {
+            return false
+        }
+        // 遍历数组，逐个赋值为 0
+        for (i in byteArray.indices) {
+            byteArray[i] = 0.toByte()
+        }
+        return true
+    }
+    /**
+     * 解码 Opus 为 PCM（优化版）
      */
     private fun decodeOpusToPcm(opusData: ByteArray) {
         val decoder = opusDecoder ?: return
         val config = audioConfig ?: return
-
+        resetByteArrayToZero(pcmDecodeBuffer)
         try {
             val numChannels = config.channels
-            val bufferSizeInSamples = 5760
-            val pcmOutput = ShortArray(bufferSizeInSamples * numChannels)
+            // Opus 每一帧每个通道最大采样数为 5760 (120ms @ 48kHz)
+            val maxSamplesPerChannel = 5760
 
-            val decodedSamples = decoder.decode(
+            // 如果频道数变化，动态调整缓冲区（虽然通常不会变）
+            if (pcmDecodeBuffer.size < maxSamplesPerChannel * numChannels) {
+                pcmDecodeBuffer = ByteArray(maxSamplesPerChannel * numChannels)
+            }
+
+            // Concentus 解码：返回的是每个通道的采样数
+            val decodedSamplesPerChannel = decoder.decode(
                 opusData, 0, opusData.size,
-                pcmOutput, 0, bufferSizeInSamples,
+                pcmDecodeBuffer, 0, maxSamplesPerChannel,
                 false
             )
+            Log.d(TAG, "decodeOpusToPcm,valid data size = ${countTrailingZeros(pcmDecodeBuffer)}")
+            if (decodedSamplesPerChannel <= 0) return
 
-            if (decodedSamples <= 0) return
+            // 计算总样本数
+            val totalSamples = decodedSamplesPerChannel * numChannels
 
-            val totalSamples = decodedSamples * numChannels
-            val decodedData = pcmOutput.copyOf(totalSamples)
-
-            // 转换为 Float32
-            val pcmFloat = FloatArray(totalSamples)
-            for (i in decodedData.indices) {
-                pcmFloat[i] = decodedData[i] / 32768.0f
-            }
-
-            // 多通道混音
-            val finalPcmFloat = if (numChannels > 1) {
-                val monoFloat = FloatArray(decodedSamples)
-                for (i in 0 until decodedSamples) {
-                    var sum = 0f
+            // 处理混音：如果是多通道，直接在 Short 级别转为单声道
+            val finalPcm: ByteArray = pcmDecodeBuffer.copyOf(3840)
+/*            if (numChannels > 1) {
+                val monoShorts = ShortArray(decodedSamplesPerChannel)
+                for (i in 0 until decodedSamplesPerChannel) {
+                    // 直接对 Short 进行平均值计算，防止溢出使用 Long 暂存
+                    var sum = 0L
                     for (ch in 0 until numChannels) {
-                        sum += pcmFloat[i * numChannels + ch]
+                        sum += pcmDecodeBuffer[i * numChannels + ch]
                     }
-                    monoFloat[i] = sum / numChannels
+                    monoShorts[i] = (sum / numChannels).toShort()
                 }
-                monoFloat
+                monoShorts
             } else {
-                pcmFloat
-            }
+                // 如果已经是单声道，拷贝一份有效数据
+                pcmDecodeBuffer.copyOf(totalSamples)
+            }*/
 
-            // Float32 → Int16
-            val pcmInt16 = ShortArray(finalPcmFloat.size)
-            for (i in finalPcmFloat.indices) {
-                val s = when {
-                    finalPcmFloat[i] > 1.0f -> 1.0f
-                    finalPcmFloat[i] < -1.0f -> -1.0f
-                    else -> finalPcmFloat[i]
-                }
-                pcmInt16[i] = if (s < 0) {
-                    (s * 32768.0f).toInt().toShort()
-                } else {
-                    (s * 32767.0f).toInt().toShort()
-                }
-            }
-
-            pcmBuffers.add(pcmInt16)
-            totalBytes += (pcmInt16.size * 2).toLong()
+            // 存储 PCM 数据
+            pcmBuffers.add(finalPcm)
+            totalBytes += (finalPcm.size * 2).toLong()
             frameCount++
 
             runOnUiThread { updateStats() }
 
         } catch (e: Exception) {
-            runOnUiThread { log("解码失败: ${e.message}") }
+            e.printStackTrace()
+            runOnUiThread { log("解码异常: ${e.message}") }
         }
+    }
+
+    /**
+     * 计算 ByteArray 尾部连续 0 字节的数量（高效版）
+     * @param byteArray 待计算的 ByteArray（可为 null）
+     * @return 尾部连续 0 的个数：null/空数组返回 0，全 0 数组返回数组长度，否则返回尾部连续 0 的数量
+     */
+    fun countTrailingZeros(byteArray: ByteArray?): Int {
+        // 1. 处理 null 或空数组
+        if (byteArray == null || byteArray.isEmpty()) {
+            return 0
+        }
+
+        var count = 0
+        // 2. 从数组最后一位开始反向遍历
+        for (i in byteArray.indices.reversed()) {
+            if (byteArray[i] == 0.toByte()) {
+                count++ // 是 0 字节，计数+1
+            } else {
+                break // 遇到非 0 字节，终止遍历
+            }
+        }
+        return count
     }
 
     /**
@@ -365,7 +483,7 @@ class OpusReceiverActivity : AppCompatActivity() {
             var totalLength = 0
             pcmBuffers.forEach { totalLength += it.size }
 
-            val mergedPCM = ShortArray(totalLength)
+            val mergedPCM = ByteArray(totalLength)
             var offset = 0
             pcmBuffers.forEach { buffer ->
                 System.arraycopy(buffer, 0, mergedPCM, offset, buffer.size)
@@ -373,7 +491,7 @@ class OpusReceiverActivity : AppCompatActivity() {
             }
 
             // 转换为字节数组
-            val byteArray = shortArrayToByteArray(mergedPCM)
+            //val byteArray = shortArrayToByteArray(mergedPCM)
 
             // 保存到文件
             val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault())
@@ -385,7 +503,7 @@ class OpusReceiverActivity : AppCompatActivity() {
                 fileName
             )
 
-            file.writeBytes(byteArray)
+            file.writeBytes(mergedPCM)
 
             log("PCM 文件已保存: ${file.absolutePath}")
             log("大小: ${totalBytes / 1024.0} KB")
@@ -477,7 +595,8 @@ class OpusReceiverActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         stopRecording()
-        webSocket?.close()
+
+        webSocket?.close(1000, "Activity destroyed")
         opusDecoder = null
     }
 

@@ -8,7 +8,7 @@
     </base-config>
     
     <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="true">192.168.10.18</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
         <trust-anchors>
             <certificates src="system" />
             <certificates src="user" />

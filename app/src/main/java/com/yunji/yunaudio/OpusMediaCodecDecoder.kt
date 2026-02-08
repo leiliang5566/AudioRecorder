@@ -3,236 +3,487 @@ package com.yunji.yunaudio
 import android.media.MediaCodec
 import android.media.MediaFormat
 import android.util.Log
+import kotlinx.coroutines.*
 import java.nio.ByteBuffer
-import java.util.concurrent.ConcurrentLinkedQueue
+import java.nio.ByteOrder
+import java.util.concurrent.PriorityBlockingQueue
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 class OpusMediaCodecDecoder(
     private val sampleRate: Int = 48000,
-    private val channelCount: Int = 2
+    private val channelCount: Int = 2,
+    private val outputMono: Boolean = true,
+    private val jitterBufferMs: Int = 60 // 抖动缓冲区大小（毫秒）
 ) {
-    private var decoder: MediaCodec? = null
-    private var isInitialized = false
-    private var presentationTimeUs = 0L
-
-    // 输出数据队列
-    private val outputQueue = ConcurrentLinkedQueue<ByteArray>()
-
-    // 解码线程控制
     @Volatile
-    private var isRunning = false
-    private var decoderThread: Thread? = null
+    private var decoder: MediaCodec? = null
+
+    private val isInitialized = AtomicBoolean(false)
+    private val isReleased = AtomicBoolean(false)
+
+    private val processingScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    // 使用优先队列，按时间戳排序
+    private val inputQueue = PriorityBlockingQueue<OpusFrame>(100) { a, b ->
+        a.pts.compareTo(b.pts)
+    }
+
+    // 抖动缓冲区 - 先积累一定数量再开始输出
+    private val jitterBuffer = mutableListOf<ByteArray>()
+    private var isBuffering = true
+    private val minBufferFrames = (jitterBufferMs / 20).coerceAtLeast(3) // 至少 3 帧
+
+    // 输出队列
+    private val outputQueue = ArrayDeque<ByteArray>(100)
+
+    // 时间戳管理
+    private val currentPts = AtomicLong(0)
+    private val frameDurationUs = 20000L
+
+    // Pre-skip
+    private var skipSamples = 312
+    private var totalSkipped = 0
+
+    // 统计
+    private var inputCount = 0
+    private var outputCount = 0
+    private var droppedCount = 0
+    private var underrunCount = 0
+
+    private var processingJob: Job? = null
 
     companion object {
         private const val TAG = "OpusMediaCodecDecoder"
         private const val MIME_TYPE = MediaFormat.MIMETYPE_AUDIO_OPUS
-        private const val TIMEOUT_US = 10000L
     }
 
-    /**
-     * 初始化解码器
-     */
-    fun initialize(): Boolean {
-        return try {
-            val bitRate = 102000
-            val mediaFormat = MediaFormat.createAudioFormat(MIME_TYPE, sampleRate, channelCount)
-            mediaFormat.setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
+    data class OpusFrame(
+        val data: ByteArray,
+        val pts: Long,
+        val timestamp: Long = System.currentTimeMillis()
+    )
 
-            val csd0bytes = byteArrayOf(
-                0x4f, 0x70, 0x75, 0x73,  // "Opus"
-                0x48, 0x65, 0x61, 0x64,  // "Head"
-                0x01,  // Version
-                0x02,  // Channel Count
-                0x02.toByte(), 0x00,  // Pre skip (修正为 0x02, 0x00)
-                0x80.toByte(), 0xbb.toByte(), 0x00, 0x00,  // Input Sample Rate
-                0x00, 0x00,  // Output Gain
-                0x00  // Mapping Family
-            )
-            val csd1bytes = byteArrayOf(0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
-            val csd2bytes = byteArrayOf(0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
-
-            mediaFormat.setByteBuffer("csd-0", ByteBuffer.wrap(csd0bytes))
-            mediaFormat.setByteBuffer("csd-1", ByteBuffer.wrap(csd1bytes))
-            mediaFormat.setByteBuffer("csd-2", ByteBuffer.wrap(csd2bytes))
-
-            decoder = MediaCodec.createDecoderByType(MIME_TYPE)
-            decoder?.configure(mediaFormat, null, null, 0)
-            decoder?.start()
-
-            isInitialized = true
-            presentationTimeUs = 0L
-
-            // 启动输出处理线程
-            startOutputThread()
-
-            Log.d(TAG, "Decoder initialized: $sampleRate Hz, $channelCount channels")
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize decoder", e)
-            false
+    suspend fun initialize(): Boolean = withContext(Dispatchers.IO) {
+        if (isReleased.get() || isInitialized.get()) {
+            return@withContext isInitialized.get()
         }
-    }
-
-    /**
-     * 启动输出处理线程
-     */
-    private fun startOutputThread() {
-        isRunning = true
-        decoderThread = Thread {
-            while (isRunning) {
-                try {
-                    processOutput()
-                    Thread.sleep(5) // 避免CPU占用过高
-                } catch (e: InterruptedException) {
-                    break
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error in output thread", e)
-                }
-            }
-        }.apply {
-            name = "OpusDecoderOutputThread"
-            start()
-        }
-    }
-
-    /**
-     * 处理输出数据
-     */
-    private fun processOutput() {
-        val codec = decoder ?: return
 
         try {
-            val bufferInfo = MediaCodec.BufferInfo()
-            val outputBufferIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
+            Log.d(TAG, "========== 初始化解码器 ==========")
+            Log.d(TAG, "参数: $sampleRate Hz, $channelCount ch, Jitter Buffer: ${minBufferFrames}帧")
 
-            when {
-                outputBufferIndex >= 0 -> {
-                    val outputBuffer = codec.getOutputBuffer(outputBufferIndex)
-                    if (bufferInfo.size > 0) {
-                        val pcmData = ByteArray(bufferInfo.size)
-                        outputBuffer?.position(bufferInfo.offset)
-                        outputBuffer?.limit(bufferInfo.offset + bufferInfo.size)
-                        outputBuffer?.get(pcmData)
+            val mediaFormat = MediaFormat.createAudioFormat(MIME_TYPE, sampleRate, channelCount)
+            mediaFormat.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
 
-                        // 放入输出队列
-                        outputQueue.offer(pcmData)
-                    }
+            // OpusHead
+            val csd0 = createOpusHeader(sampleRate, channelCount, 312)
+            mediaFormat.setByteBuffer("csd-0", ByteBuffer.wrap(csd0))
 
-                    codec.releaseOutputBuffer(outputBufferIndex, false)
-                }
-                outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                    Log.d(TAG, "Output format: ${codec.outputFormat}")
-                }
-            }
+            val emptyCsd = ByteArray(8)
+            mediaFormat.setByteBuffer("csd-1", ByteBuffer.wrap(emptyCsd))
+            mediaFormat.setByteBuffer("csd-2", ByteBuffer.wrap(emptyCsd))
+
+            val newDecoder = MediaCodec.createDecoderByType(MIME_TYPE)
+            Log.d(TAG, "解码器: ${newDecoder.name}")
+
+            newDecoder.configure(mediaFormat, null, null, 0)
+            newDecoder.start()
+
+            decoder = newDecoder
+            isInitialized.set(true)
+            currentPts.set(0)
+            totalSkipped = 0
+            isBuffering = true
+
+            jitterBuffer.clear()
+            inputQueue.clear()
+            outputQueue.clear()
+
+            startProcessing()
+
+            Log.d(TAG, "✅ 初始化成功")
+            true
         } catch (e: Exception) {
-            Log.e(TAG, "Error processing output", e)
-        }
-    }
-
-    /**
-     * 解码单个 Opus 数据包（异步）
-     * @param opusData 编码的 Opus 数据
-     * @return 立即返回 true/false，实际解码数据通过 getDecodedData() 获取
-     */
-    fun decode(opusData: ByteArray): Boolean {
-        if (!isInitialized) {
-            Log.e(TAG, "Decoder not initialized")
-            return false
-        }
-
-        val codec = decoder ?: return false
-
-        return try {
-            val inputBufferIndex = codec.dequeueInputBuffer(TIMEOUT_US)
-            if (inputBufferIndex >= 0) {
-                val inputBuffer = codec.getInputBuffer(inputBufferIndex)
-                inputBuffer?.clear()
-                inputBuffer?.put(opusData)
-
-                codec.queueInputBuffer(
-                    inputBufferIndex,
-                    0,
-                    opusData.size,
-                    presentationTimeUs,
-                    0
-                )
-
-                presentationTimeUs += 20000
-                true
-            } else {
-                Log.w(TAG, "No input buffer available")
-                false
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error during decode", e)
+            Log.e(TAG, "❌ 初始化失败", e)
+            e.printStackTrace()
+            cleanup()
             false
         }
     }
 
-    /**
-     * 获取解码后的 PCM 数据
-     * @return 解码后的数据，如果队列为空返回 null
-     */
-    fun getDecodedData(): ByteArray? {
-        return outputQueue.poll()
+    private fun createOpusHeader(sampleRate: Int, channels: Int, preSkip: Int): ByteArray {
+        return ByteBuffer.allocate(19).apply {
+            order(ByteOrder.LITTLE_ENDIAN)
+            put("OpusHead".toByteArray(Charsets.US_ASCII))
+            put(0x01.toByte())
+            put(channels.toByte())
+            putShort(preSkip.toShort())
+            putInt(sampleRate)
+            putShort(0)
+            put(0x00.toByte())
+        }.array()
+    }
+
+    private fun startProcessing() {
+        processingJob = processingScope.launch {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
+            Log.d(TAG, "处理协程启动")
+
+            while (isActive && !isReleased.get() && isInitialized.get()) {
+                try {
+                    // 1. 处理输入（主动拉取）
+                    processInputBatch()
+
+                    // 2. 处理输出（主动拉取）
+                    processOutputBatch()
+
+                    // 3. 管理抖动缓冲区
+                    manageJitterBuffer()
+
+                    // 4. 短暂休眠
+                    delay(1) // 1ms
+
+                } catch (e: CancellationException) {
+                    break
+                } catch (e: Exception) {
+                    Log.e(TAG, "处理错误", e)
+                    delay(10)
+                }
+            }
+
+            Log.d(TAG, "处理协程结束")
+        }
     }
 
     /**
-     * 获取所有可用的解码数据并合并
+     * 批量处理输入
      */
-    fun getAllDecodedData(): ByteArray? {
-        val dataList = mutableListOf<ByteArray>()
+    private fun processInputBatch() {
+        val codec = decoder ?: return
 
-        while (true) {
-            val data = outputQueue.poll() ?: break
-            dataList.add(data)
+        // 一次最多处理 5 帧输入
+        var processed = 0
+        while (processed < 5 && inputQueue.isNotEmpty()) {
+            val frame = inputQueue.poll() ?: break
+
+            try {
+                val inputIndex = codec.dequeueInputBuffer(0) // 非阻塞
+                if (inputIndex >= 0) {
+                    val inputBuffer = codec.getInputBuffer(inputIndex)
+                    inputBuffer?.clear()
+                    inputBuffer?.put(frame.data)
+
+                    codec.queueInputBuffer(
+                        inputIndex,
+                        0,
+                        frame.data.size,
+                        frame.pts,
+                        0
+                    )
+
+                    inputCount++
+                    processed++
+                } else {
+                    // 没有可用缓冲区，放回队列
+                    inputQueue.offer(frame)
+                    break
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "送入输入失败", e)
+                droppedCount++
+                break
+            }
+        }
+    }
+
+    /**
+     * 批量处理输出
+     */
+    private fun processOutputBatch() {
+        val codec = decoder ?: return
+
+        // 主动拉取，尽可能多地获取输出
+        var retrieved = 0
+        while (retrieved < 10) { // 一次最多取 10 帧
+            val bufferInfo = MediaCodec.BufferInfo()
+            val outputIndex = codec.dequeueOutputBuffer(bufferInfo, 0) // 非阻塞
+
+            when {
+                outputIndex >= 0 -> {
+                    val outputBuffer = codec.getOutputBuffer(outputIndex)
+
+                    if (bufferInfo.size > 0 && outputBuffer != null) {
+                        val pcmData = ByteArray(bufferInfo.size)
+                        outputBuffer.position(bufferInfo.offset)
+                        outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
+                        outputBuffer.get(pcmData)
+
+                        codec.releaseOutputBuffer(outputIndex, false)
+
+                        // 处理数据
+                        processPcmData(pcmData)
+
+                        outputCount++
+                        retrieved++
+                    } else {
+                        codec.releaseOutputBuffer(outputIndex, false)
+                    }
+                }
+                outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                    Log.d(TAG, "📋 格式: ${codec.outputFormat}")
+                }
+                outputIndex == MediaCodec.INFO_TRY_AGAIN_LATER -> {
+                    break
+                }
+                else -> {
+                    break
+                }
+            }
+        }
+    }
+
+    /**
+     * 处理 PCM 数据
+     */
+    private fun processPcmData(pcmData: ByteArray) {
+        // 1. 处理 Pre-skip
+        val afterSkip = handlePreSkip(pcmData) ?: return
+
+        // 2. 混音
+        val afterMix = if (outputMono && channelCount > 1) {
+            mixToMono(afterSkip, channelCount)
+        } else {
+            afterSkip
         }
 
-        if (dataList.isEmpty()) return null
+        // 3. 平滑处理
+        val smoothed = smoothAudio(afterMix)
 
-        val totalSize = dataList.sumOf { it.size }
-        val result = ByteArray(totalSize)
-        var offset = 0
+        // 4. 归一化
+        val normalized = normalizeAudio(smoothed)
 
-        for (data in dataList) {
-            System.arraycopy(data, 0, result, offset, data.size)
-            offset += data.size
+        // 5. 放入抖动缓冲区
+        synchronized(jitterBuffer) {
+            jitterBuffer.add(normalized)
         }
+    }
+
+    /**
+     * 管理抖动缓冲区
+     */
+    private fun manageJitterBuffer() {
+        synchronized(jitterBuffer) {
+            if (isBuffering) {
+                // 缓冲阶段：积累足够的帧
+                if (jitterBuffer.size >= minBufferFrames) {
+                    isBuffering = false
+                    Log.d(TAG, "✅ 缓冲完成，开始输出 (${jitterBuffer.size} 帧)")
+                }
+            } else {
+                // 正常输出阶段
+                if (jitterBuffer.isEmpty()) {
+                    // 缓冲区耗尽，重新开始缓冲
+                    isBuffering = true
+                    underrunCount++
+                    Log.w(TAG, "⚠️ 缓冲区下溢，重新缓冲 (第 $underrunCount 次)")
+                } else {
+                    // 将数据从 jitterBuffer 移到 outputQueue
+                    while (jitterBuffer.isNotEmpty()) {
+                        outputQueue.addLast(jitterBuffer.removeAt(0))
+                    }
+                }
+            }
+        }
+    }
+
+    private fun handlePreSkip(pcmData: ByteArray): ByteArray? {
+        if (totalSkipped >= skipSamples) {
+            return pcmData
+        }
+
+        val samplesInFrame = pcmData.size / (2 * channelCount)
+        val samplesToSkip = minOf(skipSamples - totalSkipped, samplesInFrame)
+        val bytesToSkip = samplesToSkip * 2 * channelCount
+
+        totalSkipped += samplesToSkip
+
+        if (bytesToSkip >= pcmData.size) {
+            return null
+        }
+
+        return pcmData.copyOfRange(bytesToSkip, pcmData.size)
+    }
+
+    /**
+     * 音频平滑（减少抖动）
+     */
+    private var lastSample: Short = 0
+
+    private fun smoothAudio(pcmData: ByteArray): ByteArray {
+        val samples = ShortArray(pcmData.size / 2)
+        ByteBuffer.wrap(pcmData)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .asShortBuffer()
+            .get(samples)
+
+        // 简单的平滑：与前一个样本加权平均
+        if (samples.isNotEmpty()) {
+            val alpha = 0.05f // 平滑系数（越小越平滑，但可能损失细节）
+
+            for (i in samples.indices) {
+                val current = samples[i]
+                val smoothed = (lastSample * alpha + current * (1 - alpha)).toInt()
+                samples[i] = smoothed.coerceIn(-32768, 32767).toShort()
+                lastSample = samples[i]
+            }
+        }
+
+        val result = ByteArray(samples.size * 2)
+        ByteBuffer.wrap(result)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .asShortBuffer()
+            .put(samples)
 
         return result
     }
 
-    /**
-     * 刷新解码器
-     */
-    fun flush() {
+    private fun normalizeAudio(pcmData: ByteArray): ByteArray {
+        val samples = ShortArray(pcmData.size / 2)
+        ByteBuffer.wrap(pcmData)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .asShortBuffer()
+            .get(samples)
+
+        // 找最大振幅
+        var maxAmplitude = 0
+        for (sample in samples) {
+            val amplitude = Math.abs(sample.toInt())
+            if (amplitude > maxAmplitude) {
+                maxAmplitude = amplitude
+            }
+        }
+
+        // 轻微增益（如果音量太小）
+        if (maxAmplitude in 1..8000) {
+            val gain = 8000f / maxAmplitude
+            val limitedGain = gain.coerceAtMost(1.3f) // 最多增益 1.3 倍
+
+            for (i in samples.indices) {
+                val amplified = (samples[i] * limitedGain).toInt()
+                samples[i] = amplified.coerceIn(-32768, 32767).toShort()
+            }
+        }
+
+        val result = ByteArray(samples.size * 2)
+        ByteBuffer.wrap(result)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .asShortBuffer()
+            .put(samples)
+
+        return result
+    }
+
+    private fun mixToMono(stereoData: ByteArray, channels: Int): ByteArray {
+        if (channels == 1) return stereoData
+
+        val stereoSamples = ShortArray(stereoData.size / 2)
+        ByteBuffer.wrap(stereoData)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .asShortBuffer()
+            .get(stereoSamples)
+
+        val monoSampleCount = stereoSamples.size / channels
+        val monoSamples = ShortArray(monoSampleCount)
+
+        for (i in 0 until monoSampleCount) {
+            var sum = 0L
+            for (ch in 0 until channels) {
+                sum += stereoSamples[i * channels + ch]
+            }
+            monoSamples[i] = (sum / channels).toShort()
+        }
+
+        val monoData = ByteArray(monoSamples.size * 2)
+        ByteBuffer.wrap(monoData).order(ByteOrder.LITTLE_ENDIAN)
+            .asShortBuffer().put(monoSamples)
+
+        return monoData
+    }
+
+    suspend fun decode(opusData: ByteArray) {
+        if (!isInitialized.get() || isReleased.get()) {
+            return
+        }
+
+        val pts = currentPts.getAndAdd(frameDurationUs)
+        inputQueue.offer(OpusFrame(opusData, pts))
+    }
+
+    suspend fun getDecodedData(): ByteArray? {
+        return synchronized(outputQueue) {
+            if (outputQueue.isNotEmpty()) {
+                outputQueue.removeFirst()
+            } else {
+                null
+            }
+        }
+    }
+
+    fun getStats(): String {
+        val bufferStatus = synchronized(jitterBuffer) {
+            if (isBuffering) "缓冲中(${jitterBuffer.size}/$minBufferFrames)"
+            else "输出中(${jitterBuffer.size})"
+        }
+
+        return "输入:$inputCount | 输出:$outputCount | 队列:${outputQueue.size} | $bufferStatus | 下溢:$underrunCount"
+    }
+
+    private fun cleanup() {
+        try {
+            decoder?.release()
+        } catch (e: Exception) { }
+        decoder = null
+        isInitialized.set(false)
+    }
+
+    suspend fun flush() = withContext(Dispatchers.IO) {
         try {
             decoder?.flush()
-            outputQueue.clear()
-            presentationTimeUs = 0L
-            Log.d(TAG, "Decoder flushed")
+            inputQueue.clear()
+            synchronized(jitterBuffer) {
+                jitterBuffer.clear()
+            }
+            synchronized(outputQueue) {
+                outputQueue.clear()
+            }
+            currentPts.set(0)
+            totalSkipped = 0
+            isBuffering = true
+            lastSample = 0
+            Log.d(TAG, "已刷新")
         } catch (e: Exception) {
-            Log.e(TAG, "Error flushing decoder", e)
+            Log.e(TAG, "刷新失败", e)
         }
     }
 
-    /**
-     * 释放资源
-     */
-    fun release() {
-        try {
-            isRunning = false
-            decoderThread?.interrupt()
-            decoderThread?.join(1000)
+    suspend fun release() = withContext(Dispatchers.IO) {
+        if (isReleased.get()) return@withContext
 
-            decoder?.stop()
-            decoder?.release()
-            decoder = null
-            outputQueue.clear()
-            isInitialized = false
+        Log.d(TAG, "========== 释放 ==========")
+        Log.d(TAG, "最终统计: ${getStats()}")
 
-            Log.d(TAG, "Decoder released")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error releasing decoder", e)
-        }
+        isReleased.set(true)
+        isInitialized.set(false)
+
+        processingJob?.cancel()
+        processingJob?.join()
+
+        cleanup()
+        processingScope.cancel()
+
+        Log.d(TAG, "✅ 已释放")
     }
+
+    fun isReady(): Boolean = isInitialized.get() && !isReleased.get()
 }

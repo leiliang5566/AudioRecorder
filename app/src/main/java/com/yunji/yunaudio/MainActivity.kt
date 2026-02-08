@@ -9,6 +9,7 @@ import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.*
 import okhttp3.*
 import okio.ByteString
@@ -239,7 +240,10 @@ class MainActivity : AppCompatActivity() {
         if (codec == "opus") {
             try {
                 opusDecoder = OpusMediaCodecDecoder()
-                opusDecoder?.initialize()
+                lifecycleScope.launch {
+                    opusDecoder?.initialize()
+                }
+                startCollecting()
                 addLog("Opus 解码器已初始化")
             } catch (e: Exception) {
                 addLog("初始化 Opus 解码器失败: ${e.message}")
@@ -247,29 +251,39 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun startCollecting() {
+        lifecycleScope.launch {
+            while (isActive) {
+                // 尝试获取解码后的数据
+                val pcmData = opusDecoder?.getDecodedData()
+                if (pcmData != null) {
+                    if (pcmData != null) {
+                        // 处理 PCM 数据（播放等）
+                        val monoPcm = pcmData
+
+                        synchronized(pcmBuffers) {
+                            pcmBuffers.add(monoPcm!!)
+                            totalBytes += monoPcm.size
+                        }
+
+                        withContext(Dispatchers.Main) {
+                            updateStats()
+                        }
+                    }
+                } else {
+                    delay(10) // 没有数据时稍等
+                }
+            }
+        }
+    }
+
     private suspend fun handleAudioData(data: ByteArray) {
         val config = audioConfig ?: return
 
-        opusDecoder!!.decode(data)
+//        opusDecoder!!.decode(data)
 
-        val pcmData = opusDecoder?.getDecodedData()
-        if (pcmData != null) {
-            // 处理 PCM 数据（播放等）
-            val monoPcm = if (config.channels > 1) {
-                convertToMono(pcmData!!, config.channels)
-            } else {
-                pcmData
-            }
+        opusDecoder?.decode(data)
 
-            synchronized(pcmBuffers) {
-                pcmBuffers.add(monoPcm!!)
-                totalBytes += monoPcm.size
-            }
-
-            withContext(Dispatchers.Main) {
-                updateStats()
-            }
-        }
     }
 
     private fun convertToMono(data: ByteArray, channels: Int): ByteArray {
